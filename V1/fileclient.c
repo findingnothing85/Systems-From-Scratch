@@ -12,7 +12,7 @@ int main() {
     hints.ai_socktype = SOCK_STREAM;
 
     getaddrinfo(
-        "your-ip-address",
+        "server-ip-address",
         "53665",
         &hints,
         &result
