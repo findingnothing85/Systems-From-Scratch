@@ -19,13 +19,13 @@ int main() {
 
     if (status != 0) {
         printf(
-            "getaddrinfo failed: %d/n",
+            "getaddrinfo failed: %s/n",
             gai_strerror(status)
         );
         return 1;
     };
 
-    sockfd = -1;
+    int sockfd;
 
     for (
         struct addrinfo *p = result;
@@ -58,7 +58,7 @@ int main() {
 
     ssize_t n;
 
-    FILE *file = fopen("dog.png", "w");
+    FILE *file = fopen("V5.md", "w");
 
     if (file == NULL) {
         perror("fopen");
