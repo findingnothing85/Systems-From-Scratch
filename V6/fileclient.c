@@ -19,7 +19,7 @@ int main() {
 
     if (status != 0) {
         printf(
-            "getaddrinfo failed: %s/n",
+            "getaddrinfo failed: %s\n",
             gai_strerror(status)
         );
         return 1;
