@@ -56,6 +56,12 @@ int main(int argc, char *argv[]) {
         server_fd = -1;
     }
 
+    if (server_fd == -1) {
+        fprintf(stderr, "Failed to bind to any address\n");
+        freeaddrinfo(result);
+        return 1;
+    };
+
     if (listen(server_fd, 1) == -1) {
         perror("listen");
         freeaddrinfo(result);
