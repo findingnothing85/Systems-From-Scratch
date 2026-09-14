@@ -54,6 +54,12 @@ int main() {
         sockfd = -1;
     }
 
+    if (sockfd == -1) {
+        fprintf(stderr, "Failed to connect to any address\n");
+        freeaddrinfo(result);
+        return 1;
+    };
+
     char buffer[1024];
 
     ssize_t n;
