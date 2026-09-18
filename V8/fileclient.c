@@ -17,7 +17,7 @@ int main(int argc, char *argv[]) {
     hints.ai_socktype = SOCK_STREAM;
 
     int status = getaddrinfo(
-        "192.168.11.5",
+        "192.168.11.4",
         "53665",
         &hints,
         &result
@@ -72,6 +72,7 @@ int main(int argc, char *argv[]) {
         request,
         sizeof(request),
         "%s\n",
+        argv[1]
     );
 
     size_t total_sent = 0;
