@@ -154,7 +154,6 @@ int main() {
 
         if (file == NULL) {
             perror("fopen");
-            close(server_fd);
             close(client_fd);
             continue;
         }
