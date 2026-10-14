@@ -5,9 +5,15 @@
 #include<string.h>
 #include<stdlib.h>
 
+const char *storage_ips[] = {
+    "192.168.11.4",
+    "192.168.11.8"
+};
+
+#define NUM_SERVERS 2
+
 int send_all(int fd, char *content, size_t n) {
     size_t total_sent = 0;
-
     while (total_sent < n) {
         ssize_t sent = send(
             fd,
@@ -24,6 +30,31 @@ int send_all(int fd, char *content, size_t n) {
     }
 
     return 0;
+}
+
+int read_header(int fd, char *header, size_t size) {
+    size_t total_received = 0;
+
+    for (;;) {
+        if (total_received >= size -1) {
+            return -1;
+        }
+
+        char c;
+
+        ssize_t received = recv(fd, &c, 1, 0);
+
+        if (received <= 0) {
+            return -1;
+        }
+
+        header[total_received++] = c;
+
+        if (c == '\n') {
+            header[total_received] = '\0';
+            return total_received;
+        }
+    }
 }
 
 void handle_client(int client_fd) {
@@ -53,117 +84,168 @@ void handle_client(int client_fd) {
         total_received += received;
         request[total_received] = '\0';
 
-        if(strchr(request,'\n') != NULL) {
+        if (strchr(request, '\n') != NULL) {
             break;
-        };
-    };
-
-    request[strcspn(request, "\n")] = '\0';
+        }
+    }
 
     printf(
         "Client requested: %s\n",
         request
     );
 
-    struct addrinfo hints = {0};
-    struct addrinfo *result;
+    int search_failed = 0;
 
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
+    for (int i = 0; i < NUM_SERVERS; i++) {
 
-    int status = getaddrinfo(
-        "192.168.11.4",
-        "53665",
-        &hints,
-        &result
-    );
+        printf("Trying server %s\n", storage_ips[i]);
+        fflush(stdout);
 
-    if (status != 0) {
-        printf(
-            "getaddrinfo failed: %s\n",
-            gai_strerror(status)
-        );
-        close(client_fd);
-        return;
-    };
+        struct addrinfo hints = {0};
+        struct addrinfo *result;
 
-    int storage_fd;
+        hints.ai_family = AF_UNSPEC;
+        hints.ai_socktype = SOCK_STREAM;
 
-    for (
-        struct addrinfo *p = result;
-        p != NULL;
-        p = p->ai_next
-    ) {
-        storage_fd = socket(
-            p->ai_family,
-            p->ai_socktype,
-            p->ai_protocol
+        int status = getaddrinfo(
+            storage_ips[i],
+            "53665",
+            &hints,
+            &result
         );
 
-        if (storage_fd == -1) {
-            continue;
+        if (status != 0) {
+            printf(
+                "getaddrinfo failed: %s\n",
+                gai_strerror(status)
+            );
+
+            search_failed = 1;
+            continue;   
         }
 
-        if (connect(
+        int storage_fd = -1;
+
+        for (
+            struct addrinfo *p = result;
+            p != NULL;
+            p = p->ai_next
+        ) {
+            storage_fd = socket(
+                p->ai_family,
+                p->ai_socktype,
+                p->ai_protocol
+            );
+
+            if (storage_fd == -1) {
+                continue;
+            }
+
+            if (connect(
                 storage_fd,
                 p->ai_addr,
                 p->ai_addrlen
             ) == 0) {
                 break;
+            }
+
+            close(storage_fd);
+            storage_fd = -1;
         }
 
-        close(storage_fd);
-        storage_fd = -1;
-    }
+        printf("Connected to storage server\n");
+        fflush(stdout);
 
-    if (storage_fd == -1) {
-        fprintf(stderr, "Failed to connect to any address\n");
-        return;
-    };
+        if (storage_fd == -1) {
+            fprintf(stderr, "Failed to connect to any address\n");
 
+            search_failed = 1;
+            continue;
+        }
 
-    size_t len = strlen(request);
+        size_t len = strlen(request);
+        request[len] = '\n';
+        request[len + 1] = '\0';
 
-    if (len + 1 >= sizeof(request)) {
-        close(storage_fd);
-        close(client_fd);
-        return;
-    }
+        if (send_all(
+            storage_fd,
+            request,
+            strlen(request)
+        ) == -1) {
+            perror("send");
+            close(storage_fd);
+            search_failed = 1;
+            continue;
+        }
 
-    request[len] = '\n';
-    request[len + 1] = '\0';
+        char header[64];
 
-    if (send_all(
-        storage_fd,
-        request,
-        strlen(request)
-    ) == -1) {
-        perror("send");
-        close(storage_fd);
-        close(client_fd);
-        return;
-    }
+        printf("Waiting for storage response...\n");
+        fflush(stdout);
 
-    char buffer[1024];
-    ssize_t n;
+        int header_length = read_header(
+            storage_fd,
+            header,
+            sizeof(header)
+        );
 
-    while ((n = recv(
-        storage_fd,
-        buffer,
-        sizeof(buffer),
-        0
-    )) > 0) {
-        
+        if (header_length == -1) {
+            close(storage_fd);
+            search_failed = 1;
+            continue;
+        }
+
+        if (strcmp(header, "NOT_FOUND\n") == 0) {
+            printf(
+                "File not found on %s\n",
+                storage_ips[i]
+            );
+
+            close(storage_fd);
+            continue;
+        }
+
         if (send_all(
             client_fd,
-            buffer,
-            n
+            header,
+            header_length
         ) == -1) {
-            break;
+            close(storage_fd);
+            close(client_fd);
+            return;
         }
+
+        char buffer[1024];
+        ssize_t n;
+
+        while((n = recv(
+            storage_fd,
+            buffer,
+            sizeof(buffer),
+            0
+        )) > 0) {
+            if (send_all(
+                client_fd,
+                buffer,
+                n
+            ) == -1) {
+                break;
+            }
+        }
+
+        close(storage_fd);
+        close(client_fd);
+        return;
     }
 
-    close(storage_fd);
+    if (search_failed) {
+        char response[] = "ERROR\n";
+        send_all(client_fd, response, strlen(response));
+    } else {
+        char response[] = "NOT_FOUND\n";
+        send_all(client_fd, response, strlen(response));
+    }
+
     close(client_fd);
 
     return;
@@ -184,8 +266,7 @@ int main() {
             "getaddrinfo failed: %s\n",
             gai_strerror(status)
         );
-        return 1;
-    };
+    }
 
     int server_fd;
 
@@ -201,8 +282,8 @@ int main() {
         );
 
         if (server_fd == -1) {
-            continue; 
-        };
+            continue;
+        }
 
         int yes = 1;
 
@@ -216,7 +297,7 @@ int main() {
             perror("setsockopt");
             close(server_fd);
             continue;
-        };
+        }
 
         if (bind(
             server_fd,
@@ -224,24 +305,24 @@ int main() {
             p->ai_addrlen
         ) == 0) {
             break;
-        };
+        }
 
         close(server_fd);
         server_fd = -1;
     }
 
+    freeaddrinfo(result);
+
     if (server_fd == -1) {
         fprintf(stderr, "Failed to bind to any address\n");
         return 1;
-    };
-
-    freeaddrinfo(result);
+    }
 
     if (listen(server_fd, 1) == -1) {
         perror("listen");
         close(server_fd);
         return 1;
-    };
+    }
 
     for (;;) {
         int client_fd = accept(server_fd, NULL, NULL);
@@ -249,13 +330,8 @@ int main() {
         if (client_fd == -1) {
             perror("accept");
             continue;
-        };
-        
+        }
+
         handle_client(client_fd);
     }
-
-    close(server_fd);
-
-    return 0;
 }
-
